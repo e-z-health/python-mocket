@@ -9,6 +9,7 @@ import os
 import select
 import socket
 import ssl
+import re
 from datetime import datetime, timedelta
 from json.decoder import JSONDecodeError
 from typing import Optional, Tuple
@@ -383,6 +384,11 @@ class MocketSocket:
             # dump the resulting dictionary to a JSON file
             if Mocket.get_truesocket_recording_dir():
                 # update the dictionary with request and response lines
+
+                for header in Mocket.get_recording_ignored_headers():
+                    header_pattern = rf"{header}: .*\r\n"
+                    req = re.sub(header_pattern, "", req)
+
                 response_dict["request"] = req
                 response_dict["response"] = hexdump(encoded_response)
 
@@ -492,9 +498,12 @@ class Mocket:
         return bool(cls.request_list())
 
     @staticmethod
-    def enable(namespace=None, truesocket_recording_dir=None):
+    def enable(
+        namespace=None, truesocket_recording_dir=None, recording_ignored_headers=[]
+    ):
         Mocket._namespace = namespace
         Mocket._truesocket_recording_dir = truesocket_recording_dir
+        Mocket._recording_ignored_headers = recording_ignored_headers
 
         if truesocket_recording_dir and not os.path.isdir(truesocket_recording_dir):
             # JSON dumps will be saved here
@@ -585,6 +594,10 @@ class Mocket:
         return cls._truesocket_recording_dir
 
     @classmethod
+    def get_recording_ignored_headers(cls):
+        return cls._recording_ignored_headers
+
+    @classmethod
     def assert_fail_if_entries_not_served(cls):
         """Mocket checks that all entries have been served at least once."""
         if not all(entry._served for entry in itertools.chain(*cls._entries.values())):
@@ -653,11 +666,13 @@ class Mocketizer:
         instance=None,
         namespace=None,
         truesocket_recording_dir=None,
+        recording_ignored_headers=[],
         strict_mode=False,
         strict_mode_allowed=None,
     ):
         self.instance = instance
         self.truesocket_recording_dir = truesocket_recording_dir
+        self.recording_ignored_headers = recording_ignored_headers
         self.namespace = namespace or text_type(id(self))
         MocketMode().STRICT = strict_mode
         if strict_mode:
@@ -671,6 +686,7 @@ class Mocketizer:
         Mocket.enable(
             namespace=self.namespace,
             truesocket_recording_dir=self.truesocket_recording_dir,
+            recording_ignored_headers=self.recording_ignored_headers,
         )
         if self.instance:
             self.check_and_call("mocketize_setup")
@@ -700,7 +716,14 @@ class Mocketizer:
             method()
 
     @staticmethod
-    def factory(test, truesocket_recording_dir, strict_mode, strict_mode_allowed, args):
+    def factory(
+        test,
+        truesocket_recording_dir,
+        recording_ignored_headers,
+        strict_mode,
+        strict_mode_allowed,
+        args,
+    ):
         instance = args[0] if args else None
         namespace = None
         if truesocket_recording_dir:
@@ -716,6 +739,7 @@ class Mocketizer:
             instance,
             namespace=namespace,
             truesocket_recording_dir=truesocket_recording_dir,
+            recording_ignored_headers=recording_ignored_headers,
             strict_mode=strict_mode,
             strict_mode_allowed=strict_mode_allowed,
         )
@@ -724,13 +748,19 @@ class Mocketizer:
 def wrapper(
     test,
     truesocket_recording_dir=None,
+    recording_ignored_headers=[],
     strict_mode=False,
     strict_mode_allowed=None,
     *args,
     **kwargs,
 ):
     with Mocketizer.factory(
-        test, truesocket_recording_dir, strict_mode, strict_mode_allowed, args
+        test,
+        truesocket_recording_dir,
+        recording_ignored_headers,
+        strict_mode,
+        strict_mode_allowed,
+        args,
     ):
         return test(*args, **kwargs)
 
